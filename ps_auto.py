@@ -79,47 +79,26 @@ def track_progress(serial, user, outfile):
         wr = csv.writer(f)
         wr.writerow(["Timestamp", "Progress (%)", "Size", "Status"])
         
+        time.sleep(2)  # Wait for UI to initialize
         while True:
-            # Check for completion first
             if d(text="Open").exists:
                 wr.writerow([datetime.datetime.now().isoformat(), 100, "Complete", "Open button visible"])
                 print("✅ Installation finished (Open button detected)")
                 return
             
-            # Try to get Play Store UI progress
             percent, size = get_play_store_progress(d)
-            
             if percent is not None:
-                # Only update if progress changed
                 if percent != last_progress:
                     status = f"Downloading: {percent}% of {size}" if size else f"Downloading: {percent}%"
                     wr.writerow([datetime.datetime.now().isoformat(), percent, size or "", status])
                     f.flush()
                     print(status)
                     last_progress = percent
-                
-                # If we're at 100% but Open button isn't visible yet
                 if percent >= 100:
                     print("Waiting for installation to complete...")
                     time.sleep(2)
                     continue
-            
-            # Fallback to package installer progress
-            try:
-                out = adb_shell(["dumpsys", "packageinstaller", "--user", user], serial=serial)
-                m = PKG_RE.search(out)
-                if m:
-                    pct = float(m.group(1)) * 100
-                    if pct != last_progress:
-                        status = f"Installing: {pct:.1f}%"
-                        wr.writerow([datetime.datetime.now().isoformat(), pct, "", status])
-                        f.flush()
-                        print(status)
-                        last_progress = pct
-            except subprocess.CalledProcessError:
-                pass
-            
-            time.sleep(1)
+            time.sleep(0.5)
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--serial", default="RZCTA09CTXF")
