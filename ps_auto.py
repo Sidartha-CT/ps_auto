@@ -33,28 +33,48 @@ def tap_install_button(serial):
     raise RuntimeError("No Install/Update/Open button found")
 
 def get_play_store_progress(d):
-    """Extracts download progress from Play Store UI"""
-    # Try different ways the progress might appear
+    """Enhanced progress detection that handles different Play Store UI versions"""
+    # Try multiple possible UI element locations for progress
     progress_elements = [
-        d(descriptionMatches=".*% of.*"),  # "13% of 84.92 MB"
-        d(textMatches=".*%$"),              # "13%"
-        d(textMatches="Downloading.*")       # "Downloading..."
+        d(descriptionMatches=".*% of.*MB"),  # "13% of 84.92 MB"
+        d(descriptionMatches=".*%$"),        # "13%"
+        d(textMatches=".*% of.*MB"),         # Alternative text location
+        d(textMatches=".*%$"),               # Just percentage
+        d(className="android.widget.ProgressBar"),  # Direct progress bar access
     ]
     
     for element in progress_elements:
         if element.exists:
+            # Get either contentDescription or text
             desc = element.info.get('contentDescription', '') or element.info.get('text', '')
-            if '%' in desc:
-                # Extract percentage and size if available
-                percent = int(re.search(r'(\d+)%', desc).group(1))
-                size_match = re.search(r'of ([\d.]+ \w+)', desc)
-                size = size_match.group(1) if size_match else "Unknown size"
-                return percent, size
+            
+            # Extract percentage
+            percent_match = re.search(r'(\d+)%', desc)
+            if not percent_match:
+                continue
+            percent = int(percent_match.group(1))
+            
+            # Extract size if available
+            size_match = re.search(r'of ([\d.]+ \w+)', desc)
+            size = size_match.group(1) if size_match else None
+            
+            # For progress bars, try to get the actual progress value
+            if not percent and element.className == "android.widget.ProgressBar":
+                percent = int(element.info.get('progress', 0))
+                max_progress = int(element.info.get('max', 100))
+                if max_progress > 0:
+                    percent = int((percent / max_progress) * 100)
+            
+            return percent, size
+    
     return None, None
+
 
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
 def track_progress(serial, user, outfile):
     d = u2.connect(serial)
+    last_progress = 0
+    
     with pathlib.Path(outfile).open("a", newline="") as f:
         wr = csv.writer(f)
         wr.writerow(["Timestamp", "Progress (%)", "Size", "Status"])
@@ -68,13 +88,21 @@ def track_progress(serial, user, outfile):
             
             # Try to get Play Store UI progress
             percent, size = get_play_store_progress(d)
+            
             if percent is not None:
-                status = f"Downloading: {percent}% of {size}" if size else f"Downloading: {percent}%"
-                wr.writerow([datetime.datetime.now().isoformat(), percent, size or "", status])
-                f.flush()
-                print(status)
-                time.sleep(1)
-                continue
+                # Only update if progress changed
+                if percent != last_progress:
+                    status = f"Downloading: {percent}% of {size}" if size else f"Downloading: {percent}%"
+                    wr.writerow([datetime.datetime.now().isoformat(), percent, size or "", status])
+                    f.flush()
+                    print(status)
+                    last_progress = percent
+                
+                # If we're at 100% but Open button isn't visible yet
+                if percent >= 100:
+                    print("Waiting for installation to complete...")
+                    time.sleep(2)
+                    continue
             
             # Fallback to package installer progress
             try:
@@ -82,17 +110,16 @@ def track_progress(serial, user, outfile):
                 m = PKG_RE.search(out)
                 if m:
                     pct = float(m.group(1)) * 100
-                    status = f"Installing: {pct:.1f}%"
-                    wr.writerow([datetime.datetime.now().isoformat(), pct, "", status])
-                    f.flush()
-                    print(status)
-                    if pct >= 100:
-                        print("✅ Package installer reports 100%")
+                    if pct != last_progress:
+                        status = f"Installing: {pct:.1f}%"
+                        wr.writerow([datetime.datetime.now().isoformat(), pct, "", status])
+                        f.flush()
+                        print(status)
+                        last_progress = pct
             except subprocess.CalledProcessError:
                 pass
             
             time.sleep(1)
-
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--serial", default="RZCTA09CTXF")
