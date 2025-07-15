@@ -31,20 +31,33 @@ def tap_install_button(serial):
 
 # ───────── progress tracker exactly like earlier example ──────────
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
+def check_open_button(serial):
+    d = u2.connect(serial)
+    return d(text="Open").exists
 def track_progress(serial, user, outfile):
     with pathlib.Path(outfile).open("a", newline="") as f:
         wr = csv.writer(f)
         while True:
             out = adb_shell(["dumpsys", "packageinstaller", "--user", user], serial=serial)
             m = PKG_RE.search(out)
+            
+            # Check if "Open" button exists (installation complete)
+            if check_open_button(serial):
+                print("✅ Installation finished (Open button detected)")
+                wr.writerow([datetime.datetime.now().isoformat(timespec="seconds"), 100.0])
+                return
+            
+            # Fallback: Still track progress %
             if m:
-                pct = float(m.group(1))*100
+                pct = float(m.group(1)) * 100
                 ts = datetime.datetime.now().isoformat(timespec="seconds")
-                wr.writerow([ts, pct]); f.flush()
+                wr.writerow([ts, pct])
+                f.flush()
                 print(f"{ts}  {pct:5.1f}%")
                 if pct >= 100:
-                    print("✅ finished")
+                    print("✅ Progress reached 100%")
                     return
+            
             time.sleep(1)
 
 # ───────────────────── glue everything together ────────────────────
