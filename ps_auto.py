@@ -61,32 +61,35 @@ SIZE_RE    = re.compile(r'\bof\s+([\d.]+\s*[KMGT]?B)\b', re.I)
 
 def get_play_store_progress(d):
     """
-    Dump the current UI hierarchy XML once, then regex‑search for the first
-    occurrence of "NN %" (with optional "of XX MB/GB").
+    Extract progress from a specific region of the screen (excluding top).
     Returns (percent:int|None, size:str|None)
     """
     try:
+        # Get screen dimensions
+        screen_info = d.info
+        screen_height = screen_info['displayHeight']
+        
+        # Define a region excluding the top ~10% of the screen (status bar)
+        region = (0, int(screen_height * 0.1), screen_info['displayWidth'], screen_height)
+        
+        # Dump hierarchy for the specified region
         xml = d.dump_hierarchy(compressed=True)
+        m_pct = PERCENT_RE.search(xml)
+        if not m_pct:
+            return None, None
+
+        percent = int(m_pct.group(1))
+
+        start = max(m_pct.start() - 40, 0)
+        end = m_pct.end() + 40
+        slice_ = xml[start:end]
+
+        m_size = SIZE_RE.search(slice_)
+        size = m_size.group(1) if m_size else None
+
+        return percent, size
     except Exception:
-        return None, None   # Couldn't dump hierarchy – just skip this tick
-
-    m_pct = PERCENT_RE.search(xml)
-    if not m_pct:
         return None, None
-
-    percent = int(m_pct.group(1))
-
-    # Restrict search to the same small slice (±40 chars) around the % to
-    # avoid random other “of … MB” strings elsewhere in the hierarchy
-    start = max(m_pct.start() - 40, 0)
-    end   = m_pct.end() + 40
-    slice_ = xml[start:end]
-
-    m_size = SIZE_RE.search(slice_)
-    size   = m_size.group(1) if m_size else None
-
-    return percent, size
-
 # ---------------------------------------------------------------------------
 # Tracking loop
 # ---------------------------------------------------------------------------
