@@ -33,15 +33,11 @@ def tap_install_button(serial):
     raise RuntimeError("No Install/Update/Open button found")
 
 def get_play_store_progress(d):
-    """
-    Return (percent:int|None, size:str|None)
-    Tries several possible UI nodes until it finds one that exposes a % value.
-    """
     progress_nodes = [
-        d(descriptionMatches=".*% of.*MB"),  # “13 % of 84.9 MB”
-        d(descriptionMatches=r".*%$"),       # “13 %”
-        d(textMatches=".*% of.*MB"),
-        d(textMatches=r".*%$"),
+        d(descriptionMatches=".*% of.*MB"),  # "13% of 84.92 MB"
+        d(descriptionMatches=".*%$"),        # "13%"
+        d(textMatches=".*% of.*MB"),         # Alternative text location
+        d(textMatches=".*%$"),               # Just percentage
         d(className="android.widget.ProgressBar"),
     ]
 
@@ -49,34 +45,34 @@ def get_play_store_progress(d):
         if not node.exists:
             continue
 
-        # ALWAYS force to str so regex never sees None
         info = node.info or {}
-        desc = str(
-            info.get("contentDescription")
-            or info.get("text")
-            or ""                      # fall‑back to empty string
-        )
+        class_name = info.get("className", "")
+        desc = str(info.get("contentDescription") or info.get("text") or "")
 
-        # -------- extract % -------------
+        # Try regex for percent
         m_pct = re.search(r"(\d+)%", desc)
-        if not m_pct and node.className == "android.widget.ProgressBar":
-            # Old Play Store: progress bars expose raw numbers
-            p = int(info.get("progress", 0))
-            mx = int(info.get("max", 100) or 100)
-            m_pct = (p * 100) // mx
-            return m_pct, None
+        if not m_pct and class_name == "android.widget.ProgressBar":
+            # Try raw values from progress bar
+            try:
+                p = int(info.get("progress", 0))
+                mx = int(info.get("max", 100) or 100)
+                percent = int((p / mx) * 100) if mx > 0 else 0
+                return percent, None
+            except Exception:
+                continue  # skip broken node
+
         elif not m_pct:
-            continue                   # try next node
+            continue  # move to next node
 
         percent = int(m_pct.group(1))
 
-        # -------- extract size ----------
+        # Extract size if present
         m_size = re.search(r"of ([\d.]+\s*\w+)", desc)
         size = m_size.group(1) if m_size else None
 
         return percent, size
 
-    return None, None                 # nothing matched
+    return None, None
 
 
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
@@ -95,7 +91,12 @@ def track_progress(serial, user, outfile):
                 print("✅ Installation finished (Open button detected)")
                 return
             
+            # percent, size = get_play_store_progress(d)
             percent, size = get_play_store_progress(d)
+            if percent is None:
+                time.sleep(0.5)
+                continue
+
             if percent is not None:
                 if percent != last_progress:
                     status = f"Downloading: {percent}% of {size}" if size else f"Downloading: {percent}%"
