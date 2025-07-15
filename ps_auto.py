@@ -11,12 +11,12 @@ def adb_shell(cmd, *, serial, user="0"):
         text=True, stderr=subprocess.DEVNULL)
 
 def launch_play_details(serial, user, package):
-    # market://details?id=<pkg> opens straight on that app’s detail page
+    # market://details?id=<pkg> opens straight on that app's detail page
     subprocess.check_call(
-        [ADB, "-s", serial, "shell", "--user", user,
-         "am", "start", "-a", "android.intent.action.VIEW",
+        [ADB, "-s", serial, "shell",
+         "am", "start", "--user", user, "-a", "android.intent.action.VIEW",
          "-d", f"market://details?id={package}", "com.android.vending"])
-    # Play Store can take a second to draw; wait until the title bar shows up
+    # Play Store can take a second to draw; wait until the title bar shows up
     d = u2.connect(serial)
     d.wait_activity("com.google.android.finsky.activities.MainActivity", timeout=10)
 
