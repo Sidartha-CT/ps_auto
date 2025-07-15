@@ -67,8 +67,7 @@ def get_play_store_progress(d):
             
             return percent, size
     
-    return None, None
-
+    return 0, 0
 
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
 def track_progress(serial, user, outfile):
