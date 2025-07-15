@@ -2,8 +2,8 @@
 # playstore_auto_install_and_track.py
 import uiautomator2 as u2, subprocess, time, csv, datetime, re, sys, argparse, pathlib
 
-ADB = "adb"                       # put full path here if adb isn’t in PATH
-BUTTON_TEXTS = ("Update", "Install")       # if your phone is in another language, localise this!
+ADB = "adb"                       # put full path here if adb isn't in PATH
+BUTTON_TEXTS = ("Update", "Install", "Open")  # Added "Open" for completion check
 
 def adb_shell(cmd, *, serial, user="0"):
     return subprocess.check_output(
@@ -24,43 +24,75 @@ def tap_install_button(serial):
     d = u2.connect(serial)
     for label in BUTTON_TEXTS:
         if d(text=label).exists:
+            if label == "Open":
+                print("App is already installed")
+                sys.exit(0)
             d(text=label).click()
             print(f'Clicked "{label}"')
             return
-    raise RuntimeError("No Install / Update button found; is the app already up‑to‑date?")
+    raise RuntimeError("No Install/Update/Open button found")
 
-# ───────── progress tracker exactly like earlier example ──────────
+def get_play_store_progress(d):
+    """Extracts download progress from Play Store UI"""
+    # Try different ways the progress might appear
+    progress_elements = [
+        d(descriptionMatches=".*% of.*"),  # "13% of 84.92 MB"
+        d(textMatches=".*%$"),              # "13%"
+        d(textMatches="Downloading.*")       # "Downloading..."
+    ]
+    
+    for element in progress_elements:
+        if element.exists:
+            desc = element.info.get('contentDescription', '') or element.info.get('text', '')
+            if '%' in desc:
+                # Extract percentage and size if available
+                percent = int(re.search(r'(\d+)%', desc).group(1))
+                size_match = re.search(r'of ([\d.]+ \w+)', desc)
+                size = size_match.group(1) if size_match else "Unknown size"
+                return percent, size
+    return None, None
+
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
-def check_open_button(serial):
-    d = u2.connect(serial)
-    return d(text="Open").exists
 def track_progress(serial, user, outfile):
+    d = u2.connect(serial)
     with pathlib.Path(outfile).open("a", newline="") as f:
         wr = csv.writer(f)
+        wr.writerow(["Timestamp", "Progress (%)", "Size", "Status"])
+        
         while True:
-            out = adb_shell(["dumpsys", "packageinstaller", "--user", user], serial=serial)
-            m = PKG_RE.search(out)
-            
-            # Check if "Open" button exists (installation complete)
-            if check_open_button(serial):
+            # Check for completion first
+            if d(text="Open").exists:
+                wr.writerow([datetime.datetime.now().isoformat(), 100, "Complete", "Open button visible"])
                 print("✅ Installation finished (Open button detected)")
-                wr.writerow([datetime.datetime.now().isoformat(timespec="seconds"), 100.0])
                 return
             
-            # Fallback: Still track progress %
-            if m:
-                pct = float(m.group(1)) * 100
-                ts = datetime.datetime.now().isoformat(timespec="seconds")
-                wr.writerow([ts, pct])
+            # Try to get Play Store UI progress
+            percent, size = get_play_store_progress(d)
+            if percent is not None:
+                status = f"Downloading: {percent}% of {size}" if size else f"Downloading: {percent}%"
+                wr.writerow([datetime.datetime.now().isoformat(), percent, size or "", status])
                 f.flush()
-                print(f"{ts}  {pct:5.1f}%")
-                if pct >= 100:
-                    print("✅ Progress reached 100%")
-                    return
+                print(status)
+                time.sleep(1)
+                continue
+            
+            # Fallback to package installer progress
+            try:
+                out = adb_shell(["dumpsys", "packageinstaller", "--user", user], serial=serial)
+                m = PKG_RE.search(out)
+                if m:
+                    pct = float(m.group(1)) * 100
+                    status = f"Installing: {pct:.1f}%"
+                    wr.writerow([datetime.datetime.now().isoformat(), pct, "", status])
+                    f.flush()
+                    print(status)
+                    if pct >= 100:
+                        print("✅ Package installer reports 100%")
+            except subprocess.CalledProcessError:
+                pass
             
             time.sleep(1)
 
-# ───────────────────── glue everything together ────────────────────
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--serial", default="RZCTA09CTXF")
@@ -69,10 +101,10 @@ if __name__ == "__main__":
     ap.add_argument("--csv", default="playstore_progress.csv")
     args = ap.parse_args()
 
-    print("Opening Play Store…")
+    print("Opening Play Store...")
     launch_play_details(args.serial, args.user, args.package)
-    print("Waiting for button…")
+    print("Waiting for button...")
     tap_install_button(args.serial)
 
-    print("Tracking progress (1 s)…")
+    print("Tracking progress (1s)...")
     track_progress(args.serial, args.user, args.csv)
