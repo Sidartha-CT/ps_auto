@@ -7,7 +7,7 @@ BUTTON_TEXTS = ("Update", "Install")       # if your phone is in another languag
 
 def adb_shell(cmd, *, serial, user="0"):
     return subprocess.check_output(
-        [ADB, "-s", serial, "shell", "--user", user] + cmd,
+        [ADB, "-s", serial, "shell"] + cmd,
         text=True, stderr=subprocess.DEVNULL)
 
 def launch_play_details(serial, user, package):
@@ -35,13 +35,13 @@ def track_progress(serial, user, outfile):
     with pathlib.Path(outfile).open("a", newline="") as f:
         wr = csv.writer(f)
         while True:
-            out = adb_shell(["dumpsys", "packageinstaller"], serial=serial, user=user)
+            out = adb_shell(["dumpsys", "packageinstaller", "--user", user], serial=serial)
             m = PKG_RE.search(out)
             if m:
                 pct = float(m.group(1))*100
                 ts = datetime.datetime.now().isoformat(timespec="seconds")
                 wr.writerow([ts, pct]); f.flush()
-                print(f"{ts}  {pct:5.1f}%")
+                print(f"{ts}  {pct:5.1f}%")
                 if pct >= 100:
                     print("✅ finished")
                     return
