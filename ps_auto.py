@@ -33,41 +33,51 @@ def tap_install_button(serial):
     raise RuntimeError("No Install/Update/Open button found")
 
 def get_play_store_progress(d):
-    """Enhanced progress detection that handles different Play Store UI versions"""
-    # Try multiple possible UI element locations for progress
-    progress_elements = [
-        d(descriptionMatches=".*% of.*MB"),  # "13% of 84.92 MB"
-        d(descriptionMatches=".*%$"),        # "13%"
-        d(textMatches=".*% of.*MB"),         # Alternative text location
-        d(textMatches=".*%$"),               # Just percentage
-        d(className="android.widget.ProgressBar"),  # Direct progress bar access
+    """
+    Return (percent:int|None, size:str|None)
+    Tries several possible UI nodes until it finds one that exposes a % value.
+    """
+    progress_nodes = [
+        d(descriptionMatches=".*% of.*MB"),  # “13 % of 84.9 MB”
+        d(descriptionMatches=r".*%$"),       # “13 %”
+        d(textMatches=".*% of.*MB"),
+        d(textMatches=r".*%$"),
+        d(className="android.widget.ProgressBar"),
     ]
-    
-    for element in progress_elements:
-        if element.exists:
-            # Get either contentDescription or text
-            desc = element.info.get('contentDescription', '') or element.info.get('text', '')
-            
-            # Extract percentage
-            percent_match = re.search(r'(\d+)%', desc)
-            if not percent_match:
-                continue
-            percent = int(percent_match.group(1))
-            
-            # Extract size if available
-            size_match = re.search(r'of ([\d.]+ \w+)', desc)
-            size = size_match.group(1) if size_match else None
-            
-            # For progress bars, try to get the actual progress value
-            if not percent and element.className == "android.widget.ProgressBar":
-                percent = int(element.info.get('progress', 0))
-                max_progress = int(element.info.get('max', 100))
-                if max_progress > 0:
-                    percent = int((percent / max_progress) * 100)
-            
-            return percent, size
-    
-    return 0, 0
+
+    for node in progress_nodes:
+        if not node.exists:
+            continue
+
+        # ALWAYS force to str so regex never sees None
+        info = node.info or {}
+        desc = str(
+            info.get("contentDescription")
+            or info.get("text")
+            or ""                      # fall‑back to empty string
+        )
+
+        # -------- extract % -------------
+        m_pct = re.search(r"(\d+)%", desc)
+        if not m_pct and node.className == "android.widget.ProgressBar":
+            # Old Play Store: progress bars expose raw numbers
+            p = int(info.get("progress", 0))
+            mx = int(info.get("max", 100) or 100)
+            m_pct = (p * 100) // mx
+            return m_pct, None
+        elif not m_pct:
+            continue                   # try next node
+
+        percent = int(m_pct.group(1))
+
+        # -------- extract size ----------
+        m_size = re.search(r"of ([\d.]+\s*\w+)", desc)
+        size = m_size.group(1) if m_size else None
+
+        return percent, size
+
+    return None, None                 # nothing matched
+
 
 PKG_RE = re.compile(r"name=com.instagram.android.*?progress=([0-9.]+)")
 def track_progress(serial, user, outfile):
